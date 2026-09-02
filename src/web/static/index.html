@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Face Provenance — Web Provenance &amp; Blockchain Verification</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2322d3ee'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M16 2 28 8v9c0 7.5-5 12.6-12 15-7-2.4-12-7.5-12-15V8z' fill='url(%23g)'/%3E%3Ctext x='16' y='21' font-size='13' text-anchor='middle' fill='%23070b14' font-family='monospace' font-weight='bold'%3EFP%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="30" height="30">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#22d3ee"/>
+              <stop offset="1" stop-color="#818cf8"/>
+            </linearGradient>
+          </defs>
+          <path d="M16 2 28 8v9c0 7.5-5 12.6-12 15-7-2.4-12-7.5-12-15V8z" fill="url(#lg)"/>
+          <text x="16" y="21" font-size="13" text-anchor="middle" fill="#070b14" font-family="monospace" font-weight="bold">FP</text>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>Face Provenance</h1>
+        <p>Web provenance &amp; blockchain verification pipeline</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="mode-chip" id="health-mode">—</span>
+      <a class="ghost-btn" href="https://github.com" target="_blank" rel="noopener">Docs</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ======================= LEFT: controls ======================= -->
+    <section class="panel controls" id="controls">
+      <div class="panel-title">
+        <h2>Input</h2>
+        <span class="privacy-badge" title="No identity data is collected or stored">
+          🔒 Privacy-safe
+        </span>
+      </div>
+
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload an image">
+        <input type="file" id="file-input" accept="image/*" hidden />
+        <canvas id="preview-canvas" hidden></canvas>
+        <div class="dz-empty" id="dz-empty">
+          <div class="dz-icon">⬆</div>
+          <p><strong>Drop an image</strong> or click to browse</p>
+          <p class="dz-hint">JPEG / PNG · demo image preloaded</p>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Chain</label>
+          <select id="chain-select">
+            <option value="anvil">Anvil (local)</option>
+            <option value="memory">Memory (simulated)</option>
+            <option value="testnet">Testnet</option>
+          </select>
+        </div>
+      </div>
+
+      <button class="primary-btn" id="run-btn">
+        <span class="btn-label">Run Pipeline</span>
+        <span class="btn-spinner" hidden></span>
+      </button>
+
+      <div class="mode-note" id="mode-note">
+        <strong>Real pipeline</strong> — genuine Serper reverse-image search, validated candidates, and an on-chain fingerprint. Requires <span class="mono">SEARCH_API_KEY</span>.
+      </div>
+
+      <div class="status-line" id="status-line" hidden></div>
+    </section>
+
+    <!-- ======================= RIGHT: pipeline ======================= -->
+    <section class="panel pipeline" id="pipeline">
+      <div class="panel-title">
+        <h2>Pipeline</h2>
+        <span class="sub" id="pipeline-sub">Ready</span>
+      </div>
+
+      <ol class="steps" id="steps">
+        <li class="step" data-step="0">
+          <div class="step-marker"><span>1</span></div>
+          <div class="step-body">
+            <h3>Face detection</h3>
+            <p class="step-sub">Privacy-preserving · no identity</p>
+            <div class="step-detail" data-detail="0"></div>
+          </div>
+        </li>
+        <li class="step" data-step="1">
+          <div class="step-marker"><span>2</span></div>
+          <div class="step-body">
+            <h3>Reverse-image search</h3>
+            <p class="step-sub">Provenance matching, never identity search</p>
+            <div class="step-detail" data-detail="1"></div>
+          </div>
+        </li>
+        <li class="step" data-step="2">
+          <div class="step-marker"><span>3</span></div>
+          <div class="step-body">
+            <h3>Candidate validation</h3>
+            <p class="step-sub">Multi-signal: SHA-256 · pHash · dimensions</p>
+            <div class="step-detail" data-detail="2"></div>
+          </div>
+        </li>
+        <li class="step" data-step="3">
+          <div class="step-marker"><span>4</span></div>
+          <div class="step-body">
+            <h3>Canonical fingerprint</h3>
+            <p class="step-sub">Sorted-keys JSON → SHA-256</p>
+            <div class="step-detail" data-detail="3"></div>
+          </div>
+        </li>
+        <li class="step" data-step="4">
+          <div class="step-marker"><span>5</span></div>
+          <div class="step-body">
+            <h3>Blockchain record</h3>
+            <p class="step-sub">Fingerprint only — no personal data</p>
+            <div class="step-detail" data-detail="4"></div>
+          </div>
+        </li>
+        <li class="step" data-step="5">
+          <div class="step-marker"><span>6</span></div>
+          <div class="step-body">
+            <h3>Verification</h3>
+            <p class="step-sub">Re-fetch → recompute → compare</p>
+            <div class="step-detail" data-detail="5"></div>
+          </div>
+        </li>
+      </ol>
+
+      <div class="verdict" id="verdict" hidden>
+        <div class="verdict-badge" id="verdict-badge">
+          <span class="verdict-icon" id="verdict-icon"></span>
+        </div>
+        <div>
+          <h3 id="verdict-title">VERIFIED</h3>
+          <p id="verdict-reason"></p>
+        </div>
+      </div>
+
+      <details class="json-drawer" id="json-drawer" hidden>
+        <summary>Raw pipeline result (JSON)</summary>
+        <pre id="json-pre"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Face Provenance</span>
+    <span class="sep">·</span>
+    <span>Never identifies people from faces — stores only cryptographic fingerprints</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

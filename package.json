@@ -1,0 +1,12 @@
+{
+  "name": "face-provenance-dev",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Ethereum dev chain (Hardhat) for the Face Provenance pipeline",
+  "scripts": {
+    "chain": "hardhat node"
+  },
+  "devDependencies": {
+    "hardhat": "^2.22.0"
+  }
+}

@@ -1,0 +1,31 @@
+# --- Runtime ---
+# HTTP clients
+requests>=2.31,<3
+httpx>=0.27,<1
+
+# Web UI (FastAPI dashboard)
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1
+
+# Typed data models
+pydantic>=2.6,<3
+
+# Environment configuration
+python-dotenv>=1.0,<2
+
+# Image processing (OpenCV 4.x line — 5.x removed the Haar cascade API)
+opencv-python-headless>=4.9,<5
+numpy>=1.26,<3
+Pillow>=10.2,<12
+
+# Blockchain (Ethereum / Anvil / testnets)
+web3>=7.0,<8
+
+# Solidity compilation fallback (used only when contracts/compiled/ProvenanceRegistry.json is missing)
+py-solc-x>=1.1,<2
+
+# --- Testing / local offline EVM ---
+pytest>=8.0,<9
+eth-tester>=0.9.0,<1
+py-evm>=0.9,<1

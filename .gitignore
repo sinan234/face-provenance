@@ -1,0 +1,40 @@
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+
+# --- Node (local Hardhat dev chain) ---
+node_modules/
+package-lock.json
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Local data (never commit user-supplied images) ---
+data/input*.jpg
+data/input*.png
+data/tmp/
+
+# --- Deployment scratch ---
+contracts/.deployed.json
