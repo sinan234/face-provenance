@@ -55,7 +55,6 @@ The pipeline runs against an **Ethereum-compatible chain**:
 |---|---|---|
 | `memory` | in-RAM simulation (labelled SIMULATED) | offline tests |
 | **`anvil`** | **real local Ethereum (Hardhat node)** — recommended | demos, no internet/funds needed |
-| `testnet` | public network (e.g. Sepolia) | optional; needs RPC + funded private key |
 
 `contracts/ProvenanceRegistry.sol` stores only `(fingerprint, submitter, timestamp, block, sourceId)` — the minimum proof needed.
 

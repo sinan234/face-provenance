@@ -30,7 +30,7 @@ from src.models.schemas import (
     ValidatedMatch,
     VerificationResult,
 )
-from src.provenance.extractor import ProvenanceExtractor
+from src.provenance.extractor import ContentUnstableError, ProvenanceExtractor
 from src.provenance.fingerprint import provenance_fingerprint
 from src.search.result_parser import MatchValidator
 from src.search.reverse_image import ReverseImageSearchProvider
@@ -128,60 +128,83 @@ class Pipeline:
                 "Refusing to continue the provenance pipeline without a face."
             )
 
-        # [2] Reverse-image / provenance search.
-        result.search = self._search.search(
-            image_bytes, mime, image_url=self._config.image_url
-        )
-        if not result.search.match_found:
+        # [2]+[3]+[4] Search, validate, extract - with recovery.
+        # Serper returns a FRESH candidate set per call and its contents vary
+        # (ads, blocked hosts, TikTok/X posts). Probes: first the full image,
+        # then (for faces) a face crop, which matches celebrity photos far
+        # better. A probe that yields an extractable, reproducible candidate
+        # wins; otherwise keep probing before honestly reporting NO MATCH.
+        attempts = 1 + self._config.search_retries
+        probes: list[tuple[bytes, str]] = [(image_bytes, mime)] * attempts
+        crop_jpeg = _face_crop_jpeg(path, result.face.faces[0].bbox) if (
+            result.face is not None
+            and result.face.face_detected
+            and result.face.faces
+        ) else None
+        if crop_jpeg is not None and self._config.face_crop_retries > 0:
+            probes += [(crop_jpeg, "image/jpeg")] * self._config.face_crop_retries
+        last_error: str | None = None
+        saw_matches = False
+        for probe_bytes, probe_mime in probes:
+            try:
+                result.search = self._search.search(
+                    probe_bytes, probe_mime, image_url=self._config.image_url
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning("Search attempt failed: %s", exc)
+                continue
+            if not (result.search and result.search.match_found):
+                continue
+            matches = self._validator.validate_all(
+                result.search.candidates, probe_bytes,
+            )
+            if not matches:
+                logger.warning("No candidate passed validation; next probe")
+                continue
+            saw_matches = True
+            for match in matches:
+                try:
+                    result.provenance = self._extractor.extract(
+                        source_url=match.candidate.url,
+                        title_hint=match.candidate.title,
+                        image_url=match.candidate.image_url,
+                        search_provider=result.search.provider,
+                        match_type=match.match_type.value,
+                    )
+                except (ContentUnstableError, FetchError) as exc:
+                    last_error = str(exc)
+                    logger.warning(
+                        "Extraction failed for candidate %s: %s",
+                        match.candidate.url, exc,
+                    )
+                    continue
+                result.match = match
+                break
+            if result.match is not None and result.provenance is not None:
+                break
+            logger.warning("All validated candidates failed extraction; next probe")
+
+        if result.search is None or not result.search.match_found:
             result.no_match_reason = (
-                result.search.reason or "No permitted matching public result found"
+                (result.search.reason if result.search else None)
+                or "No permitted matching public result found"
             )
             logger.warning("Search found no match: %s", result.no_match_reason)
             return result
-
-        # [3] Candidate validation (multi-signal, never blind trust).
-        matches = self._validator.validate_all(
-            result.search.candidates, image_bytes
-        )
-        if not matches:
-            result.no_match_reason = (
-                "No permitted matching public result found "
-                "(candidates failed validation)"
-            )
-            logger.warning("No candidate passed validation")
-            return result
-
-        # [4] Extract canonical provenance from the discovered content.
-        # Try validated candidates best-first; if the best page becomes
-        # inaccessible (robots.txt, 403, network), fall through to the next
-        # genuine candidate instead of failing the whole run.
-        last_error: str | None = None
-        for match in matches:
-            try:
-                result.provenance = self._extractor.extract(
-                    source_url=match.candidate.url,
-                    title_hint=match.candidate.title,
-                    image_url=match.candidate.image_url,
-                    search_provider=result.search.provider,
-                    match_type=match.match_type.value,
-                )
-            except FetchError as exc:
-                last_error = str(exc)
-                logger.warning(
-                    "Extraction failed for candidate %s: %s", match.candidate.url, exc
-                )
-                continue
-            result.match = match
-            break
-
         if result.match is None or result.provenance is None:
-            result.no_match_reason = (
-                "No permitted matching public result found "
-                f"(all candidates failed extraction: {last_error})"
-            )
+            if not saw_matches:
+                result.no_match_reason = (
+                    "No permitted matching public result found "
+                    "(candidates failed validation)"
+                )
+            else:
+                result.no_match_reason = (
+                    "No permitted matching public result found "
+                    f"(all candidates failed extraction: {last_error})"
+                )
             logger.warning("%s", result.no_match_reason)
             return result
-
         # [5] Cryptographic fingerprint.
         result.fingerprint = provenance_fingerprint(result.provenance)
         logger.info("Provenance fingerprint: %s", result.fingerprint)
@@ -236,6 +259,35 @@ class Pipeline:
             )
 
         return result
+
+
+def _face_crop_jpeg(image_path: Path, bbox: list[int]) -> bytes | None:
+    """Crop the detected face region and re-encode as JPEG.
+
+    Search-by-face matches celebrity photos far better than the full
+    image (background/watermarks dilute Lens results). Privacy-safe:
+    the crop is used only for a transient reverse-image search, never
+    stored or identified.
+    """
+    try:
+        from PIL import Image
+        import io
+
+        img = Image.open(image_path).convert("RGB")
+        x, y, w, h = (int(v) for v in bbox[:4])
+        pad = max(w, h) // 4
+        x0 = max(0, x - pad)
+        y0 = max(0, y - pad)
+        x1 = min(img.width, x + w + pad)
+        y1 = min(img.height, y + h + pad)
+        face = img.crop((x0, y0, x1, y1))
+        face.thumbnail((512, 512))
+        buf = io.BytesIO()
+        face.save(buf, format="JPEG", quality=92)
+        return buf.getvalue()
+    except Exception as exc:
+        logger.warning("Face crop failed: %s", exc)
+        return None
 
 
 def _guess_mime(path: Path) -> str:

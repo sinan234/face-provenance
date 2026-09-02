@@ -309,3 +309,230 @@ def test_no_face_stops_pipeline(tmp_path, fixture) -> None:
     pipeline = Pipeline(*components, PipelineConfig(mode="demo"))
     with pytest.raises(PipelineError, match="No face detected"):
         pipeline.run(str(path))
+
+
+def test_extractor_pins_reproducible_content_and_rises_on_unstable() -> None:
+    """Extraction must commit only to content that reproduces across fetches."""
+    from src.provenance.extractor import ContentUnstableError
+
+    class StablePage:
+        def fetch_page(self, url: str):
+            from src.search.web_search import PageContent
+            return PageContent(url=url, final_url=url, title="Stable", html="<html><body>constant</body></html>", text="constant")
+        def fetch_image(self, url: str) -> bytes:
+            raise NotImplementedError
+
+    stable = ProvenanceExtractor(StablePage())
+    record = stable.extract(source_url="https://s.example/post", title_hint="Stable title")
+    again = stable.extract(source_url="https://s.example/post", title_hint="Stable title")
+    assert record.content_sha256 == again.content_sha256
+    assert record.title == "Stable title"  # hint wins over page title
+
+    class FlipFlopPage:
+        def __init__(self) -> None:
+            self._n = 0
+        def fetch_page(self, url: str):
+            from src.search.web_search import PageContent
+            self._n += 1
+            return PageContent(url=url, final_url=url, title="x", html=f"<html><body>tick {self._n}</body></html>", text=f"tick {self._n}")
+        def fetch_image(self, url: str) -> bytes:
+            raise NotImplementedError
+
+    flaky = ProvenanceExtractor(FlipFlopPage())
+    with pytest.raises(ContentUnstableError):
+        flaky.extract(source_url="https://s.example/unstable", title_hint="T")
+
+
+def test_pipeline_skips_unstable_candidate_and_verifies_fallback(sample_face_path, sample_face_bytes) -> None:
+    """The TikTok/MercadoLibre failure mode: best candidate serves different
+    HTML on every fetch, so the pipeline must fall through to a stable one."""
+
+    class UnstableThenStableHandler:
+        def __init__(self) -> None:
+            self.calls = 0
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path == "/robots.txt":
+                return httpx.Response(404)
+            if path == "/u.jpg":
+                return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=sample_face_bytes)
+            if path == "/s.jpg":
+                return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=sample_face_bytes)
+            if path == "/unstable":
+                self.calls += 1
+                html = f"<html><head><title>U{self.calls}</title></head><body>variant {self.calls}</body></html>"
+                return httpx.Response(200, headers={"content-type": "text/html"}, content=html.encode("utf-8"))
+            if path == "/stable":
+                return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html><head><title>S</title></head><body>fixed body</body></html>")
+            return httpx.Response(404)
+
+    session = httpx.Client(transport=httpx.MockTransport(UnstableThenStableHandler()), follow_redirects=True)
+    fetcher = HttpContentFetcher(session=session, respect_robots=True)
+    unstable = SearchCandidate(url="https://s.example/unstable", title="Unstable", image_url="https://s.example/u.jpg", source="mocked-provider")
+    stable = SearchCandidate(url="https://s.example/stable", title="Stable", image_url="https://s.example/s.jpg", source="mocked-provider")
+
+    chain = InMemoryBlockchainClient()
+    pipeline = Pipeline(
+        FaceService(),
+        MockSearchProvider(candidates=[unstable, stable]),
+        MatchValidator(fetcher),
+        ProvenanceExtractor(fetcher),
+        chain,
+        PipelineConfig(mode="real"),
+    )
+    result = pipeline.run(str(sample_face_path))
+
+    assert result.match is not None
+    assert result.match.candidate.url == "https://s.example/stable"
+    assert result.provenance is not None
+    assert result.provenance.source_url == "https://s.example/stable"
+    assert result.verification is not None
+    assert result.verification.verified is True
+
+
+def test_verifier_retries_and_passes_when_recorded_content_reappears() -> None:
+    """Verification retries: the first re-fetch may hit a bot-challenge
+    variant, but once the recorded content reappears it must PASS."""
+    from src.blockchain.verifier import ProvenanceVerifier
+
+    recorded_html = "<html><head><title>Post</title></head><body>the real article text</body></html>"
+    wrong_html = "<html><head><title>security check</title></head><body>verify you are human</body></html>"
+
+    class RHandler:
+        def __init__(self) -> None:
+            self.pages: list[str] = []
+            self.i = 0
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/robots.txt":
+                return httpx.Response(404)
+            if request.url.path == "/post":
+                html = self.pages[min(self.i, len(self.pages) - 1)] if self.pages else wrong_html
+                self.i += 1
+                return httpx.Response(200, headers={"content-type": "text/html"}, content=html.encode("utf-8"))
+            return httpx.Response(404)
+
+    handler = RHandler()
+    session = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    # Record phase: three identical fetches pin the real content.
+    handler.pages = [recorded_html] * 3
+    rec_extractor = ProvenanceExtractor(HttpContentFetcher(session=session, respect_robots=True))
+    record = rec_extractor.extract(source_url="https://s.example/post", title_hint="Post")
+    chain = InMemoryBlockchainClient()
+    fingerprint = provenance_fingerprint(record)
+    chain.record(fingerprint, source_id=record.source_url)
+
+    # Verify phase: first fetch serves the challenge variant, then the real content.
+    handler.pages = [wrong_html, recorded_html, recorded_html]
+    handler.i = 0
+    session2 = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    verifier = ProvenanceVerifier(chain, ProvenanceExtractor(HttpContentFetcher(session=session2, respect_robots=True)))
+    result = verifier.verify_provenance(record, original_fingerprint=fingerprint)
+    assert result.verified is True
+    assert result.on_chain_hash == fingerprint
+
+
+def test_pipeline_retries_search_when_first_candidates_fail_validation(
+    sample_face_path, sample_face_bytes
+) -> None:
+    """Serper candidate sets vary per call: when nothing validates, the
+    pipeline must retry the genuine search before reporting NO MATCH."""
+
+    blocked = SearchCandidate(
+        url="https://s.example/blocked", title="Blocked", image_url="https://s.example/b.jpg", source="mock"
+    )
+    good = SearchCandidate(
+        url="https://s.example/good", title="Good", image_url="https://s.example/g.jpg", source="mock"
+    )
+
+    class RetryProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+        def search(self, image_bytes, mime, image_url=None):
+            self.calls += 1
+            cands = [blocked] if self.calls == 1 else [good]
+            return SearchResult(match_found=True, candidates=cands, provider="mock-retry")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/robots.txt":
+            return httpx.Response(404)
+        if path == "/b.jpg" or path == "/blocked":
+            return httpx.Response(403)
+        if path == "/g.jpg":
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=sample_face_bytes)
+        if path == "/good":
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html><head><title>Good</title></head><body>fixed content</body></html>")
+        return httpx.Response(404)
+
+    session = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    fetcher = HttpContentFetcher(session=session, respect_robots=True)
+    provider = RetryProvider()
+    chain = InMemoryBlockchainClient()
+    config = PipelineConfig(mode="real", search_retries=2)
+    pipeline = Pipeline(
+        FaceService(), provider, MatchValidator(fetcher), ProvenanceExtractor(fetcher), chain, config
+    )
+    result = pipeline.run(str(sample_face_path))
+
+    assert provider.calls == 2
+    assert result.match is not None
+    assert result.match.candidate.url == "https://s.example/good"
+    assert result.verification is not None and result.verification.verified is True
+
+
+def test_pipeline_researches_when_all_candidates_fail_extraction(
+    sample_face_path, sample_face_bytes
+) -> None:
+    """The Neymar failure mode: candidates validate but every page is
+    unreproducible (TikTok) or robots-blocked (X). The pipeline must run
+    a fresh genuine search and use the next candidate set."""
+
+    tiktok = SearchCandidate(
+        url="https://www.tiktok.com/@u/video/1", title="TikTok video",
+        image_url="https://s.example/t.jpg", source="mock"
+    )
+    good = SearchCandidate(
+        url="https://s.example/good", title="Good", image_url="https://s.example/g.jpg", source="mock"
+    )
+
+    class RetryProvider2:
+        def __init__(self) -> None:
+            self.calls = 0
+        def search(self, image_bytes, mime, image_url=None):
+            self.calls += 1
+            return SearchResult(
+                match_found=True,
+                candidates=[tiktok] if self.calls == 1 else [good],
+                provider="mock-retry",
+            )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/robots.txt":
+            return httpx.Response(404)
+        if path == "/t.jpg":
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=sample_face_bytes)
+        if path == "/g.jpg":
+            return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=sample_face_bytes)
+        if path == "/video/1":
+            # validated (page fetchable) but never reproducible
+            import time
+            n = int(time.time() * 1000)
+            html = f"<html><head><title>T</title></head><body>{n}</body></html>"
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=html.encode("utf-8"))
+        if path == "/good":
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html><head><title>Good</title></head><body>fixed</body></html>")
+        return httpx.Response(404)
+
+    session = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    fetcher = HttpContentFetcher(session=session, respect_robots=True)
+    provider = RetryProvider2()
+    pipeline = Pipeline(
+        FaceService(), provider, MatchValidator(fetcher), ProvenanceExtractor(fetcher),
+        InMemoryBlockchainClient(), PipelineConfig(mode="real", search_retries=2),
+    )
+    result = pipeline.run(str(sample_face_path))
+    assert provider.calls == 2
+    assert result.match is not None
+    assert result.match.candidate.url == "https://s.example/good"
+    assert result.verification is not None and result.verification.verified is True

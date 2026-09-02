@@ -76,7 +76,7 @@ class SerperLensSearchProvider:
         self,
         api_key: str,
         timeout: float = 30.0,
-        max_candidates: int = 10,
+        max_candidates: int = 20,
         session: httpx.Client | None = None,
         image_url: str | None = None,
         publisher: ImagePublisher | None = None,

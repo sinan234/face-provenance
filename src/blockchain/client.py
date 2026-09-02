@@ -3,7 +3,7 @@
 Two implementations of the ``BlockchainClient`` protocol:
 
 - ``Web3BlockchainClient`` — talks to any Ethereum-compatible chain
-  (Anvil locally, or a public testnet). Deploys the ``ProvenanceRegistry``
+  (Anvil locally). Deploys the ``ProvenanceRegistry``
   contract and submits/reads fingerprints.
 - ``InMemoryBlockchainClient`` — an explicitly-labelled simulation for tests
   and the offline demo. Every result it produces carries
@@ -62,7 +62,7 @@ class BlockchainClient(Protocol):
 
 
 class Web3BlockchainClient:
-    """Ethereum-compatible chain client (Anvil / Ganache / testnets)."""
+    """Ethereum-compatible chain client (Anvil / Ganache)."""
 
     blockchain_name = "ethereum"
 
@@ -273,7 +273,7 @@ class Web3BlockchainClient:
         if self._account is None:
             # Unlocked local account (Anvil dev accounts, eth-tester).
             return fn.transact({"from": self._default_account()})
-        # Signed path (public testnets / remote nodes).
+        # Signed path (remote nodes with a funded key).
         address = self._account.address
         transaction = fn.build_transaction(
             {

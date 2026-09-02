@@ -96,7 +96,7 @@ def test_tampered_content_not_recorded(evm_client) -> None:
 
 
 def test_signed_transaction_path(w3) -> None:
-    """Exercises the private-key signing path used on public testnets."""
+    """Exercises the private-key signing path used by remote nodes."""
     client = Web3BlockchainClient(
         rpc_url="", w3=w3, private_key=ETH_TESTER_KEY_0, chain_name="eth-tester"
     )

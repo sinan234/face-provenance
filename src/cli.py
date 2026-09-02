@@ -2,7 +2,7 @@
 
 Commands
 --------
-    process <image> [--mode demo|real] [--chain memory|anvil|testnet]
+    process <image> [--mode demo|real] [--chain memory|anvil]
         Run the full pipeline end-to-end.
     verify <image>  [--mode demo|real] [--chain ...] [--tamper]
         Re-run search -> extraction -> fingerprint and verify against the chain
@@ -87,7 +87,7 @@ def build_components(mode: str, chain: str, tamper: bool = False):
         search_provider = SerperLensSearchProvider(
             api_key=api_key,
             timeout=float(os.environ.get("SEARCH_REQUEST_TIMEOUT_SECONDS", "30")),
-            max_candidates=int(os.environ.get("SEARCH_MAX_CANDIDATES", "10")),
+            max_candidates=int(os.environ.get("SEARCH_MAX_CANDIDATES", "20")),
             image_url=image_url,
         )
         fetcher = HttpContentFetcher(
@@ -106,7 +106,7 @@ def build_components(mode: str, chain: str, tamper: bool = False):
 
     if chain == "memory":
         blockchain = InMemoryBlockchainClient()
-    elif chain in ("anvil", "testnet"):
+    elif chain == "anvil":
         rpc_url = os.environ.get("BLOCKCHAIN_RPC_URL", "http://127.0.0.1:8545")
         private_key = os.environ.get("BLOCKCHAIN_PRIVATE_KEY") or None
         contract_address = os.environ.get("PROVENANCE_CONTRACT_ADDRESS") or None
@@ -114,10 +114,10 @@ def build_components(mode: str, chain: str, tamper: bool = False):
             rpc_url=rpc_url,
             private_key=private_key,
             contract_address=contract_address,
-            chain_name="local-anvil" if chain == "anvil" else "testnet",
+            chain_name="local-anvil",
         )
     else:
-        raise ValueError(f"Unknown chain: {chain}")
+        raise ValueError(f"Unknown chain: {chain} (expected 'memory' or 'anvil')")
 
     config = PipelineConfig(mode=mode)
     if mode == "real":
@@ -264,13 +264,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_process = sub.add_parser("process", help="Run the full pipeline")
     p_process.add_argument("image", nargs="?", default=str(DEFAULT_INPUT))
     p_process.add_argument("--mode", choices=["real", "demo"], default="demo")
-    p_process.add_argument("--chain", choices=["memory", "anvil", "testnet"], default="memory")
+    p_process.add_argument("--chain", choices=["memory", "anvil"], default="memory")
     p_process.set_defaults(func=cmd_process)
 
     p_verify = sub.add_parser("verify", help="Verify provenance against the chain")
     p_verify.add_argument("image", nargs="?", default=str(DEFAULT_INPUT))
     p_verify.add_argument("--mode", choices=["real", "demo"], default="demo")
-    p_verify.add_argument("--chain", choices=["memory", "anvil", "testnet"], default="memory")
+    p_verify.add_argument("--chain", choices=["memory", "anvil"], default="memory")
     p_verify.add_argument(
         "--tamper",
         action="store_true",

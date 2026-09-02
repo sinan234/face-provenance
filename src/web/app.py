@@ -117,7 +117,7 @@ def _save_upload(file: UploadFile) -> str:
 async def process_image(
     file: UploadFile = File(...),
     mode: Literal["demo", "real"] = Form("demo"),
-    chain: Literal["memory", "anvil", "testnet"] = Form("memory"),
+    chain: Literal["memory", "anvil"] = Form("memory"),
     image_url: str | None = Form(None),
 ) -> dict:
     """Run the full pipeline: face -> search -> validate -> fingerprint -> chain -> verify."""
@@ -132,7 +132,7 @@ async def process_image(
 async def verify_image(
     file: UploadFile = File(...),
     mode: Literal["demo", "real"] = Form("demo"),
-    chain: Literal["memory", "anvil", "testnet"] = Form("memory"),
+    chain: Literal["memory", "anvil"] = Form("memory"),
     tamper: bool = Form(False),
     image_url: str | None = Form(None),
 ) -> dict:

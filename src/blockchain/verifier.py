@@ -42,28 +42,40 @@ class ProvenanceVerifier:
         original_fingerprint: str | None = None,
         refetch: bool = True,
     ) -> VerificationResult:
-        if refetch:
-            rebuilt = self._extractor.extract(
-                source_url=record.source_url,
-                title_hint=record.title,
-                image_url=record.image_url,
-                search_provider=record.search_provider,
-                match_type=record.match_type,
-            )
-        else:
-            rebuilt = record
-
-        calculated_hash = provenance_fingerprint(rebuilt)
-        on_chain = self._client.get_record(calculated_hash)
-
-        if on_chain is not None:
-            return VerificationResult(
-                verified=True,
-                calculated_hash=calculated_hash,
-                on_chain_hash=calculated_hash,
-                transaction_hash=on_chain.transaction_hash,
-                reason="Cryptographic fingerprints match",
-            )
+        # Dynamic pages (ads, bot challenges) can serve different HTML on
+        # every request, so recompute a few times. A run only PASSES when a
+        # recomputed fingerprint exists ON-CHAIN - i.e. the current content
+        # reproduces exactly what was recorded. Genuinely tampered content
+        # never matches, so this still detects tampering.
+        attempts = 3 if refetch else 1
+        calculated_hash: str | None = None
+        for _ in range(attempts):
+            try:
+                rebuilt = (
+                    self._extractor.extract(
+                        source_url=record.source_url,
+                        title_hint=record.title,
+                        image_url=record.image_url,
+                        search_provider=record.search_provider,
+                        match_type=record.match_type,
+                        require_stable=False,
+                    )
+                    if refetch
+                    else record
+                )
+            except Exception as exc:
+                logger.warning("Verification re-fetch failed: %s", exc)
+                continue
+            calculated_hash = provenance_fingerprint(rebuilt)
+            on_chain = self._client.get_record(calculated_hash)
+            if on_chain is not None:
+                return VerificationResult(
+                    verified=True,
+                    calculated_hash=calculated_hash,
+                    on_chain_hash=calculated_hash,
+                    transaction_hash=on_chain.transaction_hash,
+                    reason="Cryptographic fingerprints match",
+                )
 
         # Content differs from what was recorded (or was never recorded).
         original = (
@@ -73,7 +85,7 @@ class ProvenanceVerifier:
         )
         return VerificationResult(
             verified=False,
-            calculated_hash=calculated_hash,
+            calculated_hash=calculated_hash or provenance_fingerprint(record),
             on_chain_hash=original_fingerprint if original else None,
             transaction_hash=original.transaction_hash if original else None,
             reason="Content fingerprint differs from blockchain record",

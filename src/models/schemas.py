@@ -184,6 +184,8 @@ class PipelineConfig(BaseModel):
     record_on_chain: bool = True
     verify_after_record: bool = True
     max_candidates: int = 5
+    search_retries: int = 2
+    face_crop_retries: int = 2
     image_url: str | None = Field(
         default=None,
         description="Optional public http(s) URL of the input image for real-mode "
