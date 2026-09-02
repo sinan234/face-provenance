@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Face Provenance
 
 Privacy-preserving **face detection → genuine reverse-image search → blockchain-verified provenance** pipeline.
@@ -71,7 +70,3 @@ The pipeline runs against an **Ethereum-compatible chain**:
 ## License
 
 MIT
-=======
-# face-provenance
-Privacy-preserving face detection + genuine reverse-image search + on-chain fingerprint verification on Ethereum (Anvil).
->>>>>>> e088bc885b75a810733307c543383d51934d4b0c
